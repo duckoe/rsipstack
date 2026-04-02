@@ -1,8 +1,10 @@
+use crate::sip::Port;
 use crate::transport::tcp::TcpConnection;
 use crate::transport::transport_layer::TransportLayerInnerRef;
 use crate::transport::SipAddr;
 use crate::transport::SipConnection;
 use crate::Result;
+use parking_lot::RwLock;
 use std::fmt;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
@@ -10,6 +12,7 @@ use tracing::{debug, warn};
 pub struct TcpListenerConnectionInner {
     pub local_addr: SipAddr,
     pub external: Option<SipAddr>,
+    bound_port: RwLock<Option<Port>>,
 }
 
 #[derive(Clone)]
@@ -20,6 +23,7 @@ pub struct TcpListenerConnection {
 impl TcpListenerConnection {
     pub async fn new(local_addr: SipAddr, external: Option<SocketAddr>) -> Result<Self> {
         let inner = TcpListenerConnectionInner {
+            bound_port: RwLock::new(local_addr.addr.port),
             local_addr,
             external: external.map(|addr| SipAddr {
                 r#type: Some(crate::sip::transport::Transport::Tcp),
@@ -40,6 +44,14 @@ impl TcpListenerConnection {
             r#type: Some(crate::sip::transport::Transport::Tcp),
             addr: listener.local_addr()?.into(),
         };
+        // If specified port is 0, update bound port to ephemetal port chosen by OS
+        if self.inner.local_addr.addr.port.is_some_and(|p| p.0 == 0) {
+            self.inner
+                .bound_port
+                .write()
+                // unwrap because we can assume the OS layer always returns a port value on a bound socket
+                .replace(listener_local_addr.addr.port.unwrap());
+        }
         tokio::spawn(async move {
             loop {
                 let (stream, remote_addr) = match listener.accept().await {
@@ -71,6 +83,10 @@ impl TcpListenerConnection {
             }
         });
         Ok(())
+    }
+
+    pub fn bound_port(&self) -> Option<Port> {
+        *self.inner.bound_port.read()
     }
 }
 
