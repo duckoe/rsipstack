@@ -145,7 +145,7 @@ async fn main() -> Result<()> {
         } else {
             None
         };
-        let tcp_listener = TcpListenerConnection::new(local_addr.clone(), external_addr).await?;
+        let tcp_listener = TcpListenerConnection::new(local_addr.clone(), external_addr)?;
         transport_layer.add_transport(tcp_listener.into());
         info!(addr = %local_addr.addr, "Added TCP transport");
     }
