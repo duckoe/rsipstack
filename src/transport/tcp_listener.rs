@@ -8,7 +8,9 @@ use parking_lot::RwLock;
 use std::fmt;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
+use tokio::sync::Notify;
 use tracing::{debug, warn};
+
 pub struct TcpListenerConnectionInner {
     pub local_addr: SipAddr,
     pub external: Option<SipAddr>,
@@ -18,10 +20,11 @@ pub struct TcpListenerConnectionInner {
 #[derive(Clone)]
 pub struct TcpListenerConnection {
     pub inner: Arc<TcpListenerConnectionInner>,
+    pub listening_notif: Arc<Notify>,
 }
 
 impl TcpListenerConnection {
-    pub async fn new(local_addr: SipAddr, external: Option<SocketAddr>) -> Result<Self> {
+    pub fn new(local_addr: SipAddr, external: Option<SocketAddr>) -> Result<Self> {
         let inner = TcpListenerConnectionInner {
             bound_port: RwLock::new(local_addr.addr.port),
             local_addr,
@@ -32,6 +35,7 @@ impl TcpListenerConnection {
         };
         Ok(TcpListenerConnection {
             inner: Arc::new(inner),
+            listening_notif: Arc::new(Notify::new()),
         })
     }
 
@@ -44,7 +48,8 @@ impl TcpListenerConnection {
             r#type: Some(crate::sip::transport::Transport::Tcp),
             addr: listener.local_addr()?.into(),
         };
-        // If specified port is 0, update bound port to ephemetal port chosen by OS
+
+        // If specified port is 0, update bound port to ephemeral port chosen by OS
         if self.inner.local_addr.addr.port.is_some_and(|p| p.0 == 0) {
             self.inner
                 .bound_port
@@ -82,6 +87,7 @@ impl TcpListenerConnection {
                 debug!(?local_addr, "new tcp connection");
             }
         });
+        self.listening_notif.notify_waiters();
         Ok(())
     }
 
