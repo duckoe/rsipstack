@@ -191,7 +191,16 @@ impl TransportLayer {
             .listens
             .read()
             .iter()
-            .map(|t| t.get_addr().to_owned())
+            .map(|t| match t {
+                SipConnection::TcpListener(con) => SipAddr {
+                    addr: HostWithPort {
+                        port: con.bound_port(),
+                        ..con.inner.local_addr.addr.clone()
+                    },
+                    ..con.inner.local_addr
+                },
+                _ => t.get_addr().to_owned(),
+            })
             .collect();
         // Also include local addresses from TCP/TLS client connections.
         // For connection-oriented transports, get_addr() returns the remote address
