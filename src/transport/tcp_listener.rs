@@ -4,12 +4,11 @@ use crate::transport::transport_layer::TransportLayerInnerRef;
 use crate::transport::SipAddr;
 use crate::transport::SipConnection;
 use crate::Result;
-use parking_lot::Condvar;
-use parking_lot::Mutex;
 use parking_lot::RwLock;
 use std::fmt;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
+use tokio::sync::Notify;
 use tracing::{debug, warn};
 
 pub struct TcpListenerConnectionInner {
@@ -18,24 +17,11 @@ pub struct TcpListenerConnectionInner {
     bound_port: RwLock<Option<Port>>,
 }
 
-pub struct ListenBarrier {
-    mtx: Mutex<bool>,
-    cvar: Condvar,
-}
-
-impl ListenBarrier {
-    pub fn wait(&self) {
-        let mut listening = self.mtx.lock();
-        if !*listening {
-            self.cvar.wait(&mut listening);
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct TcpListenerConnection {
     pub inner: Arc<TcpListenerConnectionInner>,
-    pub listen_barrier: Arc<ListenBarrier>,
+    is_listening: Arc<RwLock<bool>>,
+    listen_notify: Arc<Notify>,
 }
 
 impl TcpListenerConnection {
@@ -50,10 +36,8 @@ impl TcpListenerConnection {
         };
         Ok(TcpListenerConnection {
             inner: Arc::new(inner),
-            listen_barrier: Arc::new(ListenBarrier {
-                mtx: Mutex::new(false),
-                cvar: Condvar::new(),
-            }),
+            listen_notify: Notify::new().into(),
+            is_listening: RwLock::new(false).into(),
         })
     }
 
@@ -105,8 +89,16 @@ impl TcpListenerConnection {
                 debug!(?local_addr, "new tcp connection");
             }
         });
-        self.listen_barrier.cvar.notify_all();
+
+        *self.is_listening.write() = true;
+        self.listen_notify.notify_waiters();
         Ok(())
+    }
+
+    pub async fn wait_listening(&self) {
+        if !*self.is_listening.read() {
+            self.listen_notify.notified().await;
+        }
     }
 
     pub fn bound_port(&self) -> Option<Port> {
